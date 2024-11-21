@@ -253,3 +253,12 @@
         )
     )
 )
+
+;; Governance function to adjust reward rate (only owner)
+(define-public (set-reward-rate (new-rate uint))
+    (begin
+        (asserts! (is-eq tx-sender (var-get contract-owner)) ERR-UNAUTHORIZED)
+        (var-set reward-rate new-rate)
+        (ok true)
+    )
+)
