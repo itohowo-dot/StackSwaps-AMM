@@ -13,6 +13,18 @@
 (define-constant ERR-UNAUTHORIZED (err u4))
 (define-constant ERR-TRANSFER-FAILED (err u5))
 (define-constant ERR-INVALID-TOKEN (err u6))
+(define-constant ERR-INVALID-PAIR (err u7))
+(define-constant ERR-ZERO-AMOUNT (err u8))
+(define-constant ERR-MAX-AMOUNT-EXCEEDED (err u9))
+(define-constant ERR-SAME-TOKEN (err u10))
+
+
+;; Constants
+(define-constant REWARD-RATE-PER-BLOCK u10)
+(define-constant MIN-LIQUIDITY-FOR-REWARDS u100)
+(define-constant MAX-TOKENS-PER-POOL u2)
+(define-constant MAX-REWARD-RATE u1000000) ;; Maximum allowed reward rate
+(define-constant MAX-UINT u340282366920938463463374607431768211455) ;; 2^128 - 1
 
 ;; Allowed tokens list
 (define-map allowed-tokens 
@@ -42,18 +54,13 @@
     {pending-rewards: uint}
 )
 
-;; Constants for yield farming
-(define-constant REWARD-RATE-PER-BLOCK u10)
-(define-constant MIN-LIQUIDITY-FOR-REWARDS u100)
-(define-constant MAX-TOKENS-PER-POOL u2)
-
 ;; Add allowed token
 (define-public (add-allowed-token (token principal))
-  (begin
-    (asserts! (is-eq tx-sender (var-get contract-owner)) ERR-UNAUTHORIZED)
-    (map-set allowed-tokens token true)
-    (ok true)
-  )
+    (begin
+        (asserts! (is-eq tx-sender (var-get contract-owner)) ERR-UNAUTHORIZED)
+        (asserts! (not (is-eq token (var-get contract-owner))) ERR-INVALID-TOKEN)
+        (ok (map-set allowed-tokens token true))
+    )
 )
 
 ;; Create a new liquidity pool
@@ -67,18 +74,19 @@
         (token1-principal (contract-of token1))
         (token2-principal (contract-of token2))
     )
-        ;; Validate tokens
-        (asserts! (is-valid-token token1-principal) ERR-INVALID-TOKEN)
-        (asserts! (is-valid-token token2-principal) ERR-INVALID-TOKEN)
+        ;; Validate tokens and amounts
+        (asserts! (validate-token-pair token1-principal token2-principal) ERR-INVALID-PAIR)
+        (asserts! (validate-amount initial-amount1) ERR-INVALID-AMOUNT)
+        (asserts! (validate-amount initial-amount2) ERR-INVALID-AMOUNT)
         
-        ;; Check for valid initial amounts
-        (asserts! (and (> initial-amount1 u0) (> initial-amount2 u0)) ERR-INVALID-AMOUNT)
+        ;; Check pool doesn't exist
+        (asserts! (is-none (map-get? liquidity-pools {token1: token1-principal, token2: token2-principal})) ERR-POOL-NOT-EXISTS)
         
-        ;; Transfer initial liquidity from sender
+        ;; Transfer initial liquidity
         (try! (contract-call? token1 transfer initial-amount1 tx-sender (as-contract tx-sender) none))
         (try! (contract-call? token2 transfer initial-amount2 tx-sender (as-contract tx-sender) none))
         
-        ;; Create pool entry
+        ;; Create pool
         (map-set liquidity-pools 
             {token1: token1-principal, token2: token2-principal}
             {
@@ -88,7 +96,7 @@
             }
         )
         
-        ;; Assign initial liquidity shares to sender
+        ;; Set initial liquidity shares
         (map-set user-liquidity 
             {user: tx-sender, token1: token1-principal, token2: token2-principal}
             {liquidity-shares: initial-amount1}
@@ -108,55 +116,49 @@
     (let (
         (token1-principal (contract-of token1))
         (token2-principal (contract-of token2))
-        (pool (unwrap! 
-            (map-get? liquidity-pools 
-                {token1: token1-principal, token2: token2-principal}) 
-            ERR-POOL-NOT-EXISTS
-        ))
-        (optimal-amount2 (/ (* amount1 (get token2-reserve pool)) (get token1-reserve pool)))
     )
-        ;; Validate tokens
-        (asserts! (is-valid-token token1-principal) ERR-INVALID-TOKEN)
-        (asserts! (is-valid-token token2-principal) ERR-INVALID-TOKEN)
+        ;; Validate tokens and amounts
+        (asserts! (validate-token-pair token1-principal token2-principal) ERR-INVALID-PAIR)
+        (asserts! (validate-amount amount1) ERR-INVALID-AMOUNT)
+        (asserts! (validate-amount amount2) ERR-INVALID-AMOUNT)
         
-        ;; Validate input amounts
-        (asserts! (and (> amount1 u0) (> amount2 u0)) ERR-INVALID-AMOUNT)
-        (asserts! (<= amount2 optimal-amount2) ERR-INVALID-AMOUNT)
-        
-        ;; Transfer tokens
-        (try! (contract-call? token1 transfer amount1 tx-sender (as-contract tx-sender) none))
-        (try! (contract-call? token2 transfer amount2 tx-sender (as-contract tx-sender) none))
-        
-        ;; Update pool reserves
-        (map-set liquidity-pools 
-            {token1: token1-principal, token2: token2-principal}
-            {
-                total-liquidity: (+ (get total-liquidity pool) amount1),
-                token1-reserve: (+ (get token1-reserve pool) amount1),
-                token2-reserve: (+ (get token2-reserve pool) amount2)
-            }
-        )
-        
-        ;; Update user's liquidity shares
         (let (
-            (existing-shares 
-                (default-to u0 
+            (pool (unwrap! (map-get? liquidity-pools {token1: token1-principal, token2: token2-principal}) ERR-POOL-NOT-EXISTS))
+            (optimal-amount2 (/ (* amount1 (get token2-reserve pool)) (get token1-reserve pool)))
+        )
+            ;; Validate optimal amounts
+            (asserts! (<= amount2 optimal-amount2) ERR-INVALID-AMOUNT)
+            
+            ;; Transfer tokens
+            (try! (contract-call? token1 transfer amount1 tx-sender (as-contract tx-sender) none))
+            (try! (contract-call? token2 transfer amount2 tx-sender (as-contract tx-sender) none))
+            
+            ;; Update pool
+            (map-set liquidity-pools 
+                {token1: token1-principal, token2: token2-principal}
+                {
+                    total-liquidity: (+ (get total-liquidity pool) amount1),
+                    token1-reserve: (+ (get token1-reserve pool) amount1),
+                    token2-reserve: (+ (get token2-reserve pool) amount2)
+                }
+            )
+            
+            ;; Update user shares
+            (let (
+                (existing-shares (default-to u0 
                     (get liquidity-shares 
-                        (map-get? user-liquidity 
-                            {user: tx-sender, token1: token1-principal, token2: token2-principal}
-                        )
+                        (map-get? user-liquidity {user: tx-sender, token1: token1-principal, token2: token2-principal})
                     )
+                ))
+            )
+                (map-set user-liquidity 
+                    {user: tx-sender, token1: token1-principal, token2: token2-principal}
+                    {liquidity-shares: (+ existing-shares amount1)}
                 )
-            )
-            (new-shares (+ existing-shares amount1))
-        )
-            (map-set user-liquidity 
-                {user: tx-sender, token1: token1-principal, token2: token2-principal}
-                {liquidity-shares: new-shares}
+                
+                (ok true)
             )
         )
-        
-        (ok true)
     )
 )
 
@@ -167,46 +169,56 @@
     (shares-to-remove uint)
 )
     (let (
-        (user-position (unwrap! 
-            (map-get? user-liquidity 
-                {user: tx-sender, token1: (contract-of token1), token2: (contract-of token2)}) 
-            ERR-UNAUTHORIZED
-        ))
-        (pool (unwrap! 
-            (map-get? liquidity-pools 
-                {token1: (contract-of token1), token2: (contract-of token2)}) 
-            ERR-POOL-NOT-EXISTS
-        ))
+        (token1-principal (contract-of token1))
+        (token2-principal (contract-of token2))
     )
-        ;; Validate shares
-        (asserts! (<= shares-to-remove (get liquidity-shares user-position)) ERR-INSUFFICIENT-FUNDS)
+        ;; Validate tokens and shares
+        (asserts! (validate-token-pair token1-principal token2-principal) ERR-INVALID-PAIR)
+        (asserts! (validate-amount shares-to-remove) ERR-INVALID-AMOUNT)
         
-        ;; Calculate proportional token amounts to withdraw
         (let (
-            (total-pool-liquidity (get total-liquidity pool))
-            (token1-amount (/ (* shares-to-remove (get token1-reserve pool)) total-pool-liquidity))
-            (token2-amount (/ (* shares-to-remove (get token2-reserve pool)) total-pool-liquidity))
+            (user-position (unwrap! 
+                (map-get? user-liquidity {user: tx-sender, token1: token1-principal, token2: token2-principal})
+                ERR-UNAUTHORIZED
+            ))
+            (pool (unwrap! 
+                (map-get? liquidity-pools {token1: token1-principal, token2: token2-principal})
+                ERR-POOL-NOT-EXISTS
+            ))
         )
-            ;; Transfer tokens back to user
-            (try! (as-contract (contract-call? token1 transfer token1-amount tx-sender tx-sender none)))
-            (try! (as-contract (contract-call? token2 transfer token2-amount tx-sender tx-sender none)))
+            ;; Validate shares
+            (asserts! (<= shares-to-remove (get liquidity-shares user-position)) ERR-INSUFFICIENT-FUNDS)
             
-            ;; Update pool and user liquidity
-            (map-set liquidity-pools 
-                {token1: (contract-of token1), token2: (contract-of token2)}
-                {
-                    total-liquidity: (- (get total-liquidity pool) shares-to-remove),
-                    token1-reserve: (- (get token1-reserve pool) token1-amount),
-                    token2-reserve: (- (get token2-reserve pool) token2-amount)
-                }
+            (let (
+                (total-pool-liquidity (get total-liquidity pool))
+                (token1-amount (/ (* shares-to-remove (get token1-reserve pool)) total-pool-liquidity))
+                (token2-amount (/ (* shares-to-remove (get token2-reserve pool)) total-pool-liquidity))
             )
-            
-            (map-set user-liquidity 
-                {user: tx-sender, token1: (contract-of token1), token2: (contract-of token2)}
-                {liquidity-shares: (- (get liquidity-shares user-position) shares-to-remove)}
+                ;; Validate calculated amounts
+                (asserts! (and (validate-amount token1-amount) (validate-amount token2-amount)) ERR-INVALID-AMOUNT)
+                
+                ;; Transfer tokens
+                (try! (as-contract (contract-call? token1 transfer token1-amount tx-sender tx-sender none)))
+                (try! (as-contract (contract-call? token2 transfer token2-amount tx-sender tx-sender none)))
+                
+                ;; Update pool
+                (map-set liquidity-pools 
+                    {token1: token1-principal, token2: token2-principal}
+                    {
+                        total-liquidity: (- (get total-liquidity pool) shares-to-remove),
+                        token1-reserve: (- (get token1-reserve pool) token1-amount),
+                        token2-reserve: (- (get token2-reserve pool) token2-amount)
+                    }
+                )
+                
+                ;; Update user shares
+                (map-set user-liquidity 
+                    {user: tx-sender, token1: token1-principal, token2: token2-principal}
+                    {liquidity-shares: (- (get liquidity-shares user-position) shares-to-remove)}
+                )
+                
+                (ok true)
             )
-            
-            (ok true)
         )
     )
 )
@@ -218,37 +230,47 @@
     (amount-in uint)
 )
     (let (
-        (pool (unwrap! 
-            (map-get? liquidity-pools 
-                {token1: (contract-of token-in), token2: (contract-of token-out)}) 
-            ERR-POOL-NOT-EXISTS
-        ))
-        (constant-product (* (get token1-reserve pool) (get token2-reserve pool)))
+        (token-in-principal (contract-of token-in))
+        (token-out-principal (contract-of token-out))
     )
-        ;; Transfer input tokens from user
-        (try! (contract-call? token-in transfer amount-in tx-sender (as-contract tx-sender) none))
+        ;; Validate tokens and amount
+        (asserts! (validate-token-pair token-in-principal token-out-principal) ERR-INVALID-PAIR)
+        (asserts! (validate-amount amount-in) ERR-INVALID-AMOUNT)
         
-        ;; Calculate output amount with 0.3% fee
         (let (
-            (amount-in-with-fee (* amount-in u997))
-            (new-token-in-reserve (+ (get token1-reserve pool) amount-in))
-            (new-token-out-reserve (/ constant-product new-token-in-reserve))
-            (amount-out (- (get token2-reserve pool) new-token-out-reserve))
+            (pool (unwrap! 
+                (map-get? liquidity-pools {token1: token-in-principal, token2: token-out-principal})
+                ERR-POOL-NOT-EXISTS
+            ))
+            (constant-product (* (get token1-reserve pool) (get token2-reserve pool)))
         )
-            ;; Transfer output tokens to user
-            (try! (as-contract (contract-call? token-out transfer amount-out tx-sender tx-sender none)))
+            ;; Transfer input tokens
+            (try! (contract-call? token-in transfer amount-in tx-sender (as-contract tx-sender) none))
             
-            ;; Update pool reserves
-            (map-set liquidity-pools 
-                {token1: (contract-of token-in), token2: (contract-of token-out)}
-                {
-                    total-liquidity: (get total-liquidity pool),
-                    token1-reserve: new-token-in-reserve,
-                    token2-reserve: new-token-out-reserve
-                }
+            (let (
+                (amount-in-with-fee (* amount-in u997))
+                (new-token-in-reserve (+ (get token1-reserve pool) amount-in))
+                (new-token-out-reserve (/ constant-product new-token-in-reserve))
+                (amount-out (- (get token2-reserve pool) new-token-out-reserve))
             )
-            
-            (ok amount-out)
+                ;; Validate output amount
+                (asserts! (validate-amount amount-out) ERR-INVALID-AMOUNT)
+                
+                ;; Transfer output tokens
+                (try! (as-contract (contract-call? token-out transfer amount-out tx-sender tx-sender none)))
+                
+                ;; Update pool
+                (map-set liquidity-pools 
+                    {token1: token-in-principal, token2: token-out-principal}
+                    {
+                        total-liquidity: (get total-liquidity pool),
+                        token1-reserve: new-token-in-reserve,
+                        token2-reserve: new-token-out-reserve
+                    }
+                )
+                
+                (ok amount-out)
+            )
         )
     )
 )
@@ -259,27 +281,35 @@
     (token2 <ft-trait>)
 )
     (let (
-        (user-position (unwrap! 
-            (map-get? user-liquidity 
-                {user: tx-sender, token1: (contract-of token1), token2: (contract-of token2)}) 
-            ERR-UNAUTHORIZED
-        ))
-        (current-block block-height)
+        (token1-principal (contract-of token1))
+        (token2-principal (contract-of token2))
     )
-        ;; Check minimum liquidity for rewards
-        (asserts! (>= (get liquidity-shares user-position) MIN-LIQUIDITY-FOR-REWARDS) ERR-INSUFFICIENT-FUNDS)
+        ;; Validate tokens
+        (asserts! (validate-token-pair token1-principal token2-principal) ERR-INVALID-PAIR)
         
-        ;; Calculate and distribute rewards
         (let (
-            (reward-amount (* (get liquidity-shares user-position) REWARD-RATE-PER-BLOCK))
+            (user-position (unwrap! 
+                (map-get? user-liquidity {user: tx-sender, token1: token1-principal, token2: token2-principal})
+                ERR-UNAUTHORIZED
+            ))
         )
-            ;; Update reward mapping
-            (map-set yield-rewards 
-                {user: tx-sender, token: (contract-of token1)}
-                {pending-rewards: reward-amount}
-            )
+            ;; Validate minimum liquidity
+            (asserts! (>= (get liquidity-shares user-position) MIN-LIQUIDITY-FOR-REWARDS) ERR-INSUFFICIENT-FUNDS)
             
-            (ok reward-amount)
+            (let (
+                (reward-amount (* (get liquidity-shares user-position) REWARD-RATE-PER-BLOCK))
+            )
+                ;; Validate reward amount
+                (asserts! (validate-amount reward-amount) ERR-INVALID-AMOUNT)
+                
+                ;; Update rewards
+                (map-set yield-rewards 
+                    {user: tx-sender, token: token1-principal}
+                    {pending-rewards: reward-amount}
+                )
+                
+                (ok reward-amount)
+            )
         )
     )
 )
@@ -287,15 +317,34 @@
 ;; Governance function to adjust reward rate (only owner)
 (define-public (set-reward-rate (new-rate uint))
     (begin
+        ;; Validate authorization and rate
         (asserts! (is-eq tx-sender (var-get contract-owner)) ERR-UNAUTHORIZED)
+        (asserts! (<= new-rate MAX-REWARD-RATE) ERR-INVALID-AMOUNT)
         (var-set reward-rate new-rate)
         (ok true)
     )
 )
 
+
 ;; Validate token
 (define-private (is-valid-token (token principal))
   (default-to false (map-get? allowed-tokens token))
+)
+
+;; Validation helpers
+(define-private (validate-amount (amount uint))
+    (and 
+        (> amount u0) 
+        (< amount MAX-UINT)
+    )
+)
+
+(define-private (validate-token-pair (token1 principal) (token2 principal))
+    (and 
+        (not (is-eq token1 token2))
+        (is-valid-token token1)
+        (is-valid-token token2)
+    )
 )
 
 ;; Owner variable
