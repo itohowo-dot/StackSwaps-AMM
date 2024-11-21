@@ -22,3 +22,9 @@
         token2-reserve: uint
     }
 )
+
+;; Mapping to track user liquidity positions
+(define-map user-liquidity 
+    {user: principal, token1: principal, token2: principal} 
+    {liquidity-shares: uint}
+)
