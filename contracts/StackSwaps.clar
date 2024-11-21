@@ -38,3 +38,38 @@
 ;; Constants for yield farming
 (define-constant REWARD-RATE-PER-BLOCK u10)
 (define-constant MIN-LIQUIDITY-FOR-REWARDS u100)
+
+;; Create a new liquidity pool
+(define-public (create-pool 
+    (token1 <ft-trait>) 
+    (token2 <ft-trait>) 
+    (initial-amount1 uint) 
+    (initial-amount2 uint)
+)
+    (begin
+        ;; Check for valid initial amounts
+        (asserts! (and (> initial-amount1 u0) (> initial-amount2 u0)) ERR-INVALID-AMOUNT)
+        
+        ;; Transfer initial liquidity from sender
+        (try! (contract-call? token1 transfer initial-amount1 tx-sender (as-contract tx-sender) none))
+        (try! (contract-call? token2 transfer initial-amount2 tx-sender (as-contract tx-sender) none))
+        
+        ;; Create pool entry
+        (map-set liquidity-pools 
+            {token1: (contract-of token1), token2: (contract-of token2)}
+            {
+                total-liquidity: initial-amount1,
+                token1-reserve: initial-amount1,
+                token2-reserve: initial-amount2
+            }
+        )
+        
+        ;; Assign initial liquidity shares to sender
+        (map-set user-liquidity 
+            {user: tx-sender, token1: (contract-of token1), token2: (contract-of token2)}
+            {liquidity-shares: initial-amount1}
+        )
+        
+        (ok true)
+    )
+)
