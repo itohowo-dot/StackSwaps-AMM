@@ -73,3 +73,59 @@
         (ok true)
     )
 )
+
+;; Add liquidity to an existing pool
+(define-public (add-liquidity 
+    (token1 <ft-trait>) 
+    (token2 <ft-trait>) 
+    (amount1 uint) 
+    (amount2 uint)
+)
+    (let (
+        (pool (unwrap! 
+            (map-get? liquidity-pools 
+                {token1: (contract-of token1), token2: (contract-of token2)}) 
+            ERR-POOL-NOT-EXISTS
+        ))
+        (optimal-amount2 (/ (* amount1 (get token2-reserve pool)) (get token1-reserve pool)))
+    )
+        ;; Validate input amounts
+        (asserts! (and (> amount1 u0) (> amount2 u0)) ERR-INVALID-AMOUNT)
+        (asserts! (<= amount2 optimal-amount2) ERR-INVALID-AMOUNT)
+        
+        ;; Transfer tokens
+        (try! (contract-call? token1 transfer amount1 tx-sender (as-contract tx-sender) none))
+        (try! (contract-call? token2 transfer amount2 tx-sender (as-contract tx-sender) none))
+        
+        ;; Update pool reserves
+        (map-set liquidity-pools 
+            {token1: (contract-of token1), token2: (contract-of token2)}
+            {
+                total-liquidity: (+ (get total-liquidity pool) amount1),
+                token1-reserve: (+ (get token1-reserve pool) amount1),
+                token2-reserve: (+ (get token2-reserve pool) amount2)
+            }
+        )
+        
+        ;; Update user's liquidity shares
+        (let (
+            (existing-shares 
+                (default-to u0 
+                    (get liquidity-shares 
+                        (map-get? user-liquidity 
+                            {user: tx-sender, token1: (contract-of token1), token2: (contract-of token2)}
+                        )
+                    )
+                )
+            )
+            (new-shares (+ existing-shares amount1))
+        )
+            (map-set user-liquidity 
+                {user: tx-sender, token1: (contract-of token1), token2: (contract-of token2)}
+                {liquidity-shares: new-shares}
+            )
+        )
+        
+        (ok true)
+    )
+)
