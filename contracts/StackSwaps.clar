@@ -129,3 +129,54 @@
         (ok true)
     )
 )
+
+;; Remove liquidity from a pool
+(define-public (remove-liquidity 
+    (token1 <ft-trait>) 
+    (token2 <ft-trait>) 
+    (shares-to-remove uint)
+)
+    (let (
+        (user-position (unwrap! 
+            (map-get? user-liquidity 
+                {user: tx-sender, token1: (contract-of token1), token2: (contract-of token2)}) 
+            ERR-UNAUTHORIZED
+        ))
+        (pool (unwrap! 
+            (map-get? liquidity-pools 
+                {token1: (contract-of token1), token2: (contract-of token2)}) 
+            ERR-POOL-NOT-EXISTS
+        ))
+    )
+        ;; Validate shares
+        (asserts! (<= shares-to-remove (get liquidity-shares user-position)) ERR-INSUFFICIENT-FUNDS)
+        
+        ;; Calculate proportional token amounts to withdraw
+        (let (
+            (total-pool-liquidity (get total-liquidity pool))
+            (token1-amount (/ (* shares-to-remove (get token1-reserve pool)) total-pool-liquidity))
+            (token2-amount (/ (* shares-to-remove (get token2-reserve pool)) total-pool-liquidity))
+        )
+            ;; Transfer tokens back to user
+            (try! (as-contract (contract-call? token1 transfer token1-amount tx-sender tx-sender none)))
+            (try! (as-contract (contract-call? token2 transfer token2-amount tx-sender tx-sender none)))
+            
+            ;; Update pool and user liquidity
+            (map-set liquidity-pools 
+                {token1: (contract-of token1), token2: (contract-of token2)}
+                {
+                    total-liquidity: (- (get total-liquidity pool) shares-to-remove),
+                    token1-reserve: (- (get token1-reserve pool) token1-amount),
+                    token2-reserve: (- (get token2-reserve pool) token2-amount)
+                }
+            )
+            
+            (map-set user-liquidity 
+                {user: tx-sender, token1: (contract-of token1), token2: (contract-of token2)}
+                {liquidity-shares: (- (get liquidity-shares user-position) shares-to-remove)}
+            )
+            
+            (ok true)
+        )
+    )
+)
