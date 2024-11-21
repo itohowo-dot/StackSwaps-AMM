@@ -180,3 +180,45 @@
         )
     )
 )
+
+;; Swap tokens using AMM
+(define-public (swap-tokens 
+    (token-in <ft-trait>) 
+    (token-out <ft-trait>) 
+    (amount-in uint)
+)
+    (let (
+        (pool (unwrap! 
+            (map-get? liquidity-pools 
+                {token1: (contract-of token-in), token2: (contract-of token-out)}) 
+            ERR-POOL-NOT-EXISTS
+        ))
+        (constant-product (* (get token1-reserve pool) (get token2-reserve pool)))
+    )
+        ;; Transfer input tokens from user
+        (try! (contract-call? token-in transfer amount-in tx-sender (as-contract tx-sender) none))
+        
+        ;; Calculate output amount with 0.3% fee
+        (let (
+            (amount-in-with-fee (* amount-in u997))
+            (new-token-in-reserve (+ (get token1-reserve pool) amount-in))
+            (new-token-out-reserve (/ constant-product new-token-in-reserve))
+            (amount-out (- (get token2-reserve pool) new-token-out-reserve))
+        )
+            ;; Transfer output tokens to user
+            (try! (as-contract (contract-call? token-out transfer amount-out tx-sender tx-sender none)))
+            
+            ;; Update pool reserves
+            (map-set liquidity-pools 
+                {token1: (contract-of token-in), token2: (contract-of token-out)}
+                {
+                    total-liquidity: (get total-liquidity pool),
+                    token1-reserve: new-token-in-reserve,
+                    token2-reserve: new-token-out-reserve
+                }
+            )
+            
+            (ok amount-out)
+        )
+    )
+)
