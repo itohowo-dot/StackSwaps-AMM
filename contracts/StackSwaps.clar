@@ -28,3 +28,9 @@
     {user: principal, token1: principal, token2: principal} 
     {liquidity-shares: uint}
 )
+
+;; Mapping to track yield farming rewards
+(define-map yield-rewards 
+    {user: principal, token: principal} 
+    {pending-rewards: uint}
+)
