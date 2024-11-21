@@ -222,3 +222,34 @@
         )
     )
 )
+
+;; Claim yield farming rewards
+(define-public (claim-yield-rewards 
+    (token1 <ft-trait>) 
+    (token2 <ft-trait>)
+)
+    (let (
+        (user-position (unwrap! 
+            (map-get? user-liquidity 
+                {user: tx-sender, token1: (contract-of token1), token2: (contract-of token2)}) 
+            ERR-UNAUTHORIZED
+        ))
+        (current-block block-height)
+    )
+        ;; Check minimum liquidity for rewards
+        (asserts! (>= (get liquidity-shares user-position) MIN-LIQUIDITY-FOR-REWARDS) ERR-INSUFFICIENT-FUNDS)
+        
+        ;; Calculate and distribute rewards
+        (let (
+            (reward-amount (* (get liquidity-shares user-position) REWARD-RATE-PER-BLOCK))
+        )
+            ;; Update reward mapping
+            (map-set yield-rewards 
+                {user: tx-sender, token: (contract-of token1)}
+                {pending-rewards: reward-amount}
+            )
+            
+            (ok reward-amount)
+        )
+    )
+)
