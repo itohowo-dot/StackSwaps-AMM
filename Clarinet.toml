@@ -9,6 +9,11 @@ requirements = []
 path = 'contracts/StackSwaps.clar'
 clarity_version = 2
 epoch = 2.5
+
+[contracts.ft-trait]
+path = 'contracts/ft-trait.clar'
+clarity_version = 2
+epoch = 2.5
 [repl.analysis]
 passes = ['check_checker']
 

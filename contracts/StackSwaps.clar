@@ -3,17 +3,8 @@
 ;; description:
 ;; This smart contract implements an automated market maker (AMM) for token swaps, allowing users to create liquidity pools, add and remove liquidity, swap tokens, and claim yield farming rewards. The contract supports governance functions for adjusting reward rates and ensures secure and efficient token transfers and liquidity management.
 
-;; SIP-010 Fungible Token Trait
-(define-trait ft-trait
-  (
-    (transfer (uint principal principal (optional (buff 34))) (response bool uint))
-    (get-balance (principal) (response uint uint))
-    (get-name () (response (string-ascii 32) uint))
-    (get-symbol () (response (string-ascii 32) uint))
-    (get-decimals () (response uint uint))
-    (get-total-supply () (response uint uint))
-  )
-)
+;; Import the FT trait from the correct contract
+(use-trait ft-trait .ft-trait.ft-trait)
 
 ;; Error constants
 (define-constant ERR-INSUFFICIENT-FUNDS (err u1))
@@ -54,7 +45,7 @@
 ;; Constants for yield farming
 (define-constant REWARD-RATE-PER-BLOCK u10)
 (define-constant MIN-LIQUIDITY-FOR-REWARDS u100)
-(define-constant MAX-TOKENS-PER-POOL u2)  ;; Enforce max tokens per pool
+(define-constant MAX-TOKENS-PER-POOL u2)
 
 ;; Add allowed token
 (define-public (add-allowed-token (token principal))
@@ -311,6 +302,5 @@
 (define-data-var contract-owner principal tx-sender)
 (define-data-var reward-rate uint REWARD-RATE-PER-BLOCK)
 
-
 ;; Initial setup - owner adds initial allowed tokens
-(map-set allowed-tokens (contract-of (var-get contract-owner)) true)
+(map-set allowed-tokens (var-get contract-owner) true)
