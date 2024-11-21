@@ -262,3 +262,7 @@
         (ok true)
     )
 )
+
+;; Owner variable
+(define-data-var contract-owner principal tx-sender)
+(define-data-var reward-rate uint REWARD-RATE-PER-BLOCK)
