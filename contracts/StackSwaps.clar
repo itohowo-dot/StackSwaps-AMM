@@ -6,10 +6,19 @@
 ;; traits
 (use-trait ft-trait .sip-010-trait.sip-010-trait)
 
-
 ;; Error constants
 (define-constant ERR-INSUFFICIENT-FUNDS (err u1))
 (define-constant ERR-INVALID-AMOUNT (err u2))
 (define-constant ERR-POOL-NOT-EXISTS (err u3))
 (define-constant ERR-UNAUTHORIZED (err u4))
 (define-constant ERR-TRANSFER-FAILED (err u5))
+
+;; Storage for liquidity pools
+(define-map liquidity-pools 
+    {token1: principal, token2: principal} 
+    {
+        total-liquidity: uint,
+        token1-reserve: uint,
+        token2-reserve: uint
+    }
+)
