@@ -3,8 +3,17 @@
 ;; description:
 ;; This smart contract implements an automated market maker (AMM) for token swaps, allowing users to create liquidity pools, add and remove liquidity, swap tokens, and claim yield farming rewards. The contract supports governance functions for adjusting reward rates and ensures secure and efficient token transfers and liquidity management.
 
-;; traits
-(use-trait ft-trait .sip-010-trait.sip-010-trait)
+;; SIP-010 Fungible Token Trait
+(define-trait ft-trait
+  (
+    (transfer (uint principal principal (optional (buff 34))) (response bool uint))
+    (get-balance (principal) (response uint uint))
+    (get-name () (response (string-ascii 32) uint))
+    (get-symbol () (response (string-ascii 32) uint))
+    (get-decimals () (response uint uint))
+    (get-total-supply () (response uint uint))
+  )
+)
 
 ;; Error constants
 (define-constant ERR-INSUFFICIENT-FUNDS (err u1))
