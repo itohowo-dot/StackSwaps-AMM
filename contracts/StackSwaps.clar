@@ -34,3 +34,7 @@
     {user: principal, token: principal} 
     {pending-rewards: uint}
 )
+
+;; Constants for yield farming
+(define-constant REWARD-RATE-PER-BLOCK u10)
+(define-constant MIN-LIQUIDITY-FOR-REWARDS u100)
